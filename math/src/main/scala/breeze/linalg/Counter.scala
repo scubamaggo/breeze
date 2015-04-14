@@ -15,15 +15,14 @@ package breeze.linalg
  limitations under the License.
 */
 
-import breeze.storage.Zero
-import breeze.math.{TensorSpace, Ring, Semiring, Field}
-import breeze.generic._
-import collection.Set
-import operators._
-import breeze.linalg.support._
-import CanTraverseValues.ValuesVisitor
+import breeze.linalg.operators._
 import breeze.linalg.support.CanTraverseKeyValuePairs.KeyValuePairsVisitor
+import breeze.linalg.support.CanTraverseValues.ValuesVisitor
+import breeze.linalg.support._
+import breeze.math._
+import breeze.storage.Zero
 
+import scala.collection.Set
 /**
  * A map-like tensor that acts like a collection of key-value pairs where
  * the set of values may grow arbitrarily.
@@ -162,9 +161,29 @@ object Counter extends CounterOps {
     override def isTraversableAgain(from: Counter[K, V]): Boolean = true
   }
 
-  implicit def tensorspace[K, V](implicit field: Field[V], normImpl: norm.Impl[V, Double]) = {
+  implicit def normImplDouble[K, V:Field]:norm.Impl2[Counter[K, V], Double, Double] = new norm.Impl2[Counter[K, V], Double, Double] {
+    override def apply(ctr: Counter[K, V], p: Double): Double = {
+      var result = 0.0
+      for( v <- ctr.valuesIterator) {
+        result += math.pow(implicitly[Field[V]].normImpl(v), p)
+      }
+      math.pow(result, 1/p)
+    }
+  }
+
+  implicit def canCreateZeros[K,V:Zero:Semiring]: CanCreateZeros[Counter[K,V],K] =
+    new CanCreateZeros[Counter[K,V],K] {
+      // Shouldn't need to supply a key value here, but it really mixes up the
+      // VectorSpace hierarchy since it would require separate types for
+      // implicitly full-domain spaces (like Counter), and finite domain spaces, like Vector
+      def apply(d: K): Counter[K, V] = {
+        Counter.apply()
+      }
+    }
+
+  implicit def space[K, V](implicit field: Field[V]): MutableEnumeratedCoordinateField[Counter[K, V], K, V] = {
     implicit def zipMap = Counter.zipMap[K, V, V]
-    TensorSpace.make[Counter[K, V], K, V]
+    MutableEnumeratedCoordinateField.make[Counter[K, V], K, V]
   }
 }
 

@@ -14,14 +14,16 @@ package breeze.linalg.operators
  See the License for the specific language governing permissions and
  limitations under the License.
 */
-import breeze.generic.{UFunc, MMRegistry2, Multimethod2}
-import breeze.math.{Field, Ring, Semiring}
+
+import breeze.generic.{UFunc, MMRegistry2/*, Multimethod2*/}
 import breeze.linalg.support.CanCopy
-import breeze.numerics.IntMath
+
 import scala.annotation.unchecked.uncheckedVariance
+import scala.reflect.ClassTag
 
 object BinaryOp {
-  def fromCopyAndUpdate[A,B,Op](implicit op: UFunc.InPlaceImpl2[Op, A, B], copy: CanCopy[A]):UFunc.UImpl2[Op, A, B, A] = {
+
+  def fromCopyAndUpdate[A, B, Op](implicit op: UFunc.InPlaceImpl2[Op, A, B], copy: CanCopy[A]):UFunc.UImpl2[Op, A, B, A] = {
     new UFunc.UImpl2[Op, A, B, A] {
       def apply(a: A, b: B): A = {
         val c = copy(a)
@@ -29,8 +31,6 @@ object BinaryOp {
         c
       }
     }
-
-
   }
 
 }
@@ -83,8 +83,8 @@ trait BinaryRegistry[A, B, Op, +R] extends UFunc.UImpl2[Op, A, B, R] with MMRegi
     }
   }
 
-  def register[AA<:A, BB<:B](op: UFunc.UImpl2[Op,AA, BB, R @uncheckedVariance])(implicit manA: Manifest[AA], manB: Manifest[BB]) = {
-    super.register(manA.runtimeClass, manB.runtimeClass, op)
+  def register[AA<:A, BB<:B](op: UFunc.UImpl2[Op,AA, BB, R @uncheckedVariance])(implicit cA: ClassTag[AA], cB: ClassTag[BB]) = {
+    super.register(cA.runtimeClass, cB.runtimeClass, op)
     op
   }
 

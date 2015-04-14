@@ -1,5 +1,7 @@
 package breeze.math
 
+import breeze.linalg
+
 /*
  Copyright 2012 David Hall
 
@@ -24,12 +26,15 @@ trait Ring[@specialized(Int,Short,Long,Float,Double) V] extends Semiring[V]  {
 
   def -(a : V, b : V) : V
   def negate(s: V): V = this.-(zero, s)
+  def %(a: V, b: V): V
 
+  implicit val normImpl: linalg.norm.Impl[V,Double]
+  def sNorm(a: V): Double = linalg.norm(a)
 }
 
 object Ring {
   import Field._
-  implicit val ringD: Ring[Double] = fieldD
+  implicit val ringD: Ring[Double] = fieldDouble
   implicit val ringFloat: Ring[Float] = fieldFloat
   implicit val ringInt: Ring[Int] = fieldInt
   implicit val ringLong: Ring[Long] = fieldLong

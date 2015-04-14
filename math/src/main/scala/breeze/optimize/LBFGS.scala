@@ -16,15 +16,15 @@ package breeze.optimize
  limitations under the License. 
 */
 
-import breeze.math.MutableInnerProductSpace
 import breeze.linalg._
 import breeze.linalg.operators.OpMulMatrix
+import breeze.math.MutableInnerProductModule
+import breeze.optimize.linear.PowerMethod
 import breeze.util.SerializableLogging
-
 
 /**
  * Port of LBFGS to Scala.
- * 
+ *
  * Special note for LBFGS:
  *  If you use it in published work, you must cite one of:
  *     * J. Nocedal. Updating  Quasi-Newton  Matrices  with  Limited  Storage
@@ -38,7 +38,7 @@ import breeze.util.SerializableLogging
  * @param m: The memory of the search. 3 to 7 is usually sufficient.
  */
 class LBFGS[T](maxIter: Int = -1, m: Int=10, tolerance: Double=1E-9)
-              (implicit space: MutableInnerProductSpace[T, Double]) extends FirstOrderMinimizer[T,DiffFunction[T]](maxIter, tolerance) with SerializableLogging {
+              (implicit space: MutableInnerProductModule[T, Double]) extends FirstOrderMinimizer[T, DiffFunction[T]](maxIter, tolerance, tolerance) with SerializableLogging {
 
   import space._
   require(m > 0)
@@ -80,16 +80,15 @@ class LBFGS[T](maxIter: Int = -1, m: Int=10, tolerance: Double=1E-9)
       throw new StepSizeUnderflow
     alpha
   }
-
 }
 
 object LBFGS {
   case class ApproximateInverseHessian[T](m: Int,
                                           private[LBFGS] val memStep: IndexedSeq[T] = IndexedSeq.empty,
                                           private[LBFGS] val memGradDelta: IndexedSeq[T] = IndexedSeq.empty)
-                                         (implicit vspace: MutableInnerProductSpace[T, Double]) extends NumericOps[ApproximateInverseHessian[T]] {
+                                         (implicit space: MutableInnerProductModule[T, Double]) extends NumericOps[ApproximateInverseHessian[T]] {
 
-    import vspace._
+    import space._
 
     def repr: ApproximateInverseHessian[T] = this
 
@@ -115,7 +114,7 @@ object LBFGS {
        1.0
      }
 
-     val dir = vspace.copy(grad)
+     val dir = space.copy(grad)
      val as = new Array[Double](m)
      val rho = new Array[Double](m)
 
@@ -140,16 +139,10 @@ object LBFGS {
     }
   }
 
-
-  implicit def multiplyInverseHessian[T](implicit vspace: MutableInnerProductSpace[T, Double]):OpMulMatrix.Impl2[ApproximateInverseHessian[T], T, T] = {
+  implicit def multiplyInverseHessian[T](implicit vspace: MutableInnerProductModule[T, Double]):OpMulMatrix.Impl2[ApproximateInverseHessian[T], T, T] = {
     new OpMulMatrix.Impl2[ApproximateInverseHessian[T], T, T] {
       def apply(a: ApproximateInverseHessian[T], b: T): T = a * b
     }
-
   }
-
-
-
-
 }
 

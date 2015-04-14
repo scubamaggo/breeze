@@ -3,7 +3,7 @@ package breeze.optimize
 import breeze.util._
 import breeze.linalg._
 import breeze.numerics._
-import breeze.math.MutableCoordinateSpace
+import breeze.math._
 
 
 /**
@@ -14,11 +14,19 @@ import breeze.math.MutableCoordinateSpace
  *
  * @author dlwh
  */
-class OWLQN[T](maxIter: Int, m: Int,  l1reg: Double=1.0, tolerance: Double = 1E-8)(implicit vspace: MutableCoordinateSpace[T, Double]) extends LBFGS[T](maxIter, m, tolerance=tolerance) with SerializableLogging {
-  import vspace._
-  require(m > 0)
-  require(l1reg >= 0)
+class OWLQN[K, T](maxIter: Int, m: Int, l1reg: K => Double, tolerance: Double)(implicit space: MutableEnumeratedCoordinateField[T, K, Double]) extends LBFGS[T](maxIter, m, tolerance=tolerance) with SerializableLogging {
 
+  def this(maxIter: Int, m: Int, l1reg: K => Double)(implicit space: MutableEnumeratedCoordinateField[T, K, Double]) = this(maxIter, m, l1reg, 1E-8)
+
+  def this(maxIter: Int, m: Int, l1reg: Double, tolerance: Double = 1E-8)(implicit space:MutableEnumeratedCoordinateField[T, K, Double]) = this(maxIter, m, (_: K) => l1reg, tolerance)
+
+  def this(maxIter: Int, m: Int, l1reg: Double)(implicit space: MutableEnumeratedCoordinateField[T, K, Double]) = this(maxIter, m, (_: K) => l1reg, 1E-8)
+
+  def this(maxIter: Int, m: Int)(implicit space: MutableEnumeratedCoordinateField[T, K, Double]) = this(maxIter, m, (_: K) => 1.0, 1E-8)
+
+  require(m > 0)
+
+  import space._
 
   override protected def chooseDescentDirection(state: State, fn: DiffFunction[T]) = {
     val descentDir = super.chooseDescentDirection(state.copy(grad = state.adjustedGradient), fn)
@@ -27,7 +35,7 @@ class OWLQN[T](maxIter: Int, m: Int,  l1reg: Double=1.0, tolerance: Double = 1E-
     // in the same directional (within the same hypercube) as the adjusted gradient for proof.
     // Although this doesn't seem to affect the outcome that much in most of cases, there are some cases
     // where the algorithm won't converge (confirmed with the author, Galen Andrew).
-    val correctedDir = vspace.zipMapValues.map(descentDir, state.adjustedGradient, { case (d, g) => if (d * g < 0) d else 0.0 })
+    val correctedDir = space.zipMapValues.map(descentDir, state.adjustedGradient, { case (d, g) => if (d * g < 0) d else 0.0 })
 
     correctedDir
   }
@@ -62,7 +70,7 @@ class OWLQN[T](maxIter: Int, m: Int,  l1reg: Double=1.0, tolerance: Double = 1E-
          adjv -> (adjgrad dot dir)
        }
     }
-    val search = new BacktrackingLineSearch(shrinkStep= if(iter < 1) 0.1 else 0.5)
+    val search = new BacktrackingLineSearch(state.value, shrinkStep= if(iter < 1) 0.1 else 0.5)
     val alpha = search.minimize(ff, if(iter < 1) .5/norm(state.grad) else 1.0)
 
     alpha
@@ -74,30 +82,37 @@ class OWLQN[T](maxIter: Int, m: Int,  l1reg: Double=1.0, tolerance: Double = 1E-
   override protected def takeStep(state: State, dir: T, stepSize: Double) = {
     val stepped = state.x + dir * stepSize
     val orthant = computeOrthant(state.x, state.adjustedGradient)
-    vspace.zipMapValues.map(stepped, orthant, { case (v, ov) =>
+    space.zipMapValues.map(stepped, orthant, { case (v, ov) =>
       v * I(math.signum(v) == math.signum(ov))
     })
   }
 
   // Adds in the regularization stuff to the gradient
-  override protected def adjust(newX: T, newGrad: T, newVal: Double) = {
-    val res = vspace.zipMapValues.map(newX, newGrad, {case (xv, v) =>
-      xv match {
-        case 0.0 => {
-          val delta_+ = v + l1reg
-          val delta_- = v - l1reg
-          if (delta_- > 0) delta_- else if (delta_+ < 0) delta_+ else 0.0
-        }
+  override protected def adjust(newX: T, newGrad: T, newVal: Double): (Double, T) = {
+    var adjValue = newVal
+    val res = space.zipMapKeyValues.mapActive(newX, newGrad, {case (i, xv, v) =>
+      val l1regValue = l1reg(i)
+      require(l1regValue >= 0.0)
 
-        case _ => v + math.signum(xv) * l1reg
+      if(l1regValue == 0.0) {
+        v
+      } else {
+        adjValue += Math.abs(l1regValue * xv)
+        xv match {
+          case 0.0 => {
+            val delta_+ = v + l1regValue
+            val delta_- = v - l1regValue
+            if (delta_- > 0) delta_- else if (delta_+ < 0) delta_+ else 0.0
+          }
+          case _ => v + math.signum(xv) * l1regValue
+        }
       }
     })
-    val adjValue = newVal + l1reg * norm(newX, 1)
     adjValue -> res
   }
 
   private def computeOrthant(x: T, grad: T) = {
-    val orth = vspace.zipMapValues.map(x, grad, {case (v, gv) =>
+    val orth = space.zipMapValues.map(x, grad, {case (v, gv) =>
       if(v != 0) math.signum(v)
       else math.signum(-gv)
     })
@@ -105,26 +120,3 @@ class OWLQN[T](maxIter: Int, m: Int,  l1reg: Double=1.0, tolerance: Double = 1E-
   }
 
 }
-
-
-object OWLQN {
-  def main(args: Array[String]) {
-    val lbfgs = new OWLQN[DenseVector[Double]](100,4)
-
-    def optimizeThis(init: DenseVector[Double]) = {
-      val f = new DiffFunction[DenseVector[Double]] {
-        def calculate(x: DenseVector[Double]) = {
-          (sum((x - 3.0) :^ 2.0),(x * 2.0) - 6.0)
-        }
-      }
-
-      val result = lbfgs.minimize(f,init)
-    }
-
-    //    optimizeThis(Counter(1->1.0,2->2.0,3->3.0))
-    //    optimizeThis(Counter(3-> -2.0,2->3.0,1-> -10.0))
-    //        optimizeThis(DenseVector(1.0,2.0,3.0))
-    optimizeThis(DenseVector( -0.0,0.0, -0.0))
-  }
-}
-

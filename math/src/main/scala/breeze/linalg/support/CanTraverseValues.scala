@@ -29,6 +29,24 @@ trait CanTraverseValues[From, A] {
   /**Traverses all values from the given collection. */
   def traverse(from: From, fn: ValuesVisitor[A]): Unit
   def isTraversableAgain(from: From):Boolean
+
+  def foldLeft[B](from: From, b: B)(fn: (B, A)=>B):B = {
+    var bb = b
+
+    traverse(from, new ValuesVisitor[A] {
+      override def visit(a: A): Unit = {
+        bb = fn(bb, a)
+      }
+
+      override def zeros(numZero: Int, zeroValue: A): Unit = {
+        for(i <- 0 until numZero) {
+          bb = fn(bb, zeroValue)
+        }
+      }
+    })
+
+    bb
+  }
 }
 
 
@@ -53,7 +71,7 @@ object CanTraverseValues {
   // Arrays
   //
 
-  class OpArray[@specialized(Int, Float, Double) A]
+  class OpArray[@specialized(Double, Int, Float, Long) A]
     extends CanTraverseValues[Array[A], A] {
     /** Traverses all values from the given collection. */
     def traverse(from: Array[A], fn: ValuesVisitor[A]): Unit = {

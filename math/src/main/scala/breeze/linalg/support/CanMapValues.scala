@@ -16,8 +16,10 @@ package breeze.linalg.support
  limitations under the License.
 */
 import breeze.math.Complex
-import scala.reflect.ClassTag
 import breeze.linalg.support.CanMapValues.HandHold
+
+import scala.{specialized=>spec}
+import scala.reflect.ClassTag
 
 /**
  * Marker for being able to map the keys and values in a value collection
@@ -49,14 +51,14 @@ trait CanMapValuesLowPrio {
 object CanMapValues extends CanMapValuesLowPrio {
   class HandHold[From, ValueType]
 
-  /*
-  implicit def canMapSelf[V, V2]: CanMapValues[V, V, V2, V2] = {
-    new CanMapValues[V, V, V2, V2] {
-      def map(from: V, fn: (V) => V2) = fn(from)
-      def mapActive(from: V, fn: (V) => V2) = fn(from)
-    }
-  }
-  */
+  implicit def canMapSelfDouble[V2]: CanMapValues[Double, Double, V2, V2] = canMapSelf[Double, V2]
+  implicit def canMapSelfInt[V2]: CanMapValues[Int, Int, V2, V2] = canMapSelf[Int, V2]
+  implicit def canMapSelfFloat[V2]: CanMapValues[Float, Float, V2, V2] = canMapSelf[Float, V2]
+  implicit def canMapSelfLong[V2]: CanMapValues[Long, Long, V2, V2] = canMapSelf[Long, V2]
+  implicit def canMapSelfShort[V2]: CanMapValues[Short, Short, V2, V2] = canMapSelf[Short, V2]
+  implicit def canMapSelfByte[V2]: CanMapValues[Byte, Byte, V2, V2] = canMapSelf[Byte, V2]
+  implicit def canMapSelfChar[V2]: CanMapValues[Char, Char, V2, V2] = canMapSelf[Char, V2]
+
 
   type Op[From, A, B, To] = CanMapValues[From, A, B, To]
 
@@ -64,7 +66,7 @@ object CanMapValues extends CanMapValuesLowPrio {
   // Arrays
   //
 
-  class OpArray[@specialized(Int, Float, Double) A, @specialized(Int, Float, Double) B: ClassTag]
+  class OpArray[@spec(Double, Int, Float, Long)  A, @spec(Double, Int, Float, Long) B: ClassTag]
     extends Op[Array[A], A, B, Array[B]] {
 
     /**Maps all values from the given collection. */
@@ -81,7 +83,7 @@ object CanMapValues extends CanMapValuesLowPrio {
   }
 
 
-  implicit def opArray[@specialized A, @specialized B: ClassTag] =
+  implicit def opArray[@spec A, @spec B: ClassTag] =
     new OpArray[A, B]
 
   implicit object OpArrayII extends OpArray[Int, Int]

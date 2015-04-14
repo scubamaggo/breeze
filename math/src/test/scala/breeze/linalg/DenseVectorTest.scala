@@ -1,11 +1,12 @@
 package breeze.linalg
 
+import org.netlib.blas.Ddot
 import org.scalacheck._
 import org.scalatest._
 import org.scalatest.junit._
 import org.scalatest.prop._
 import org.junit.runner.RunWith
-import breeze.math.{Complex, DoubleValuedTensorSpaceTestBase, TensorSpace, TensorSpaceTestBase}
+import breeze.math._
 import breeze.stats.mean
 import java.util
 
@@ -85,6 +86,25 @@ class DenseVectorTest extends FunSuite with Checkers {
     assert(max(v) === 3)
   }
 
+  test("elemenwise max") {
+    val v = DenseVector(2, 0, 3, 2, -1)
+    val v2 = DenseVector(3, -1, 3, 4, -4)
+
+    assert(max(v, v2) === DenseVector(3, 0, 3, 4, -1))
+    assert(max(v, 2) === DenseVector(2, 2, 3, 2, 2))
+
+    assert(min(v, 2) === DenseVector(2, 0, 2, 2, -1))
+  }
+
+  test("Scalars on the LHS") {
+    val v = DenseVector(2, 1, 3, 2, -1)
+    assert(1 :+ v == v + 1)
+    assert(1 :- v == -v + 1)
+    assert(6 :/ v == v.mapValues(6 / _) )
+    assert(6 :* v == v.mapValues(6 * _) )
+
+  }
+
   test("Topk") {
     val v = DenseVector(2, 0, 3, 4, -1)
 
@@ -96,17 +116,19 @@ class DenseVectorTest extends FunSuite with Checkers {
     assert(mean(DenseVector(0.0,1.0,2.0)) === 1.0)
     assert(mean(DenseVector(0.0,3.0)) === 1.5)
     assert(mean(DenseVector(3.0)) === 3.0)
+    assert(mean(DenseVector(3.0).t) === 3.0)
   }
 
   test("Norm") {
     val v = DenseVector(-0.4326, -1.6656, 0.1253, 0.2877, -1.1465)
-    assertClose(v.norm(1), 3.6577)
-    assertClose(v.norm(2), 2.0915)
-    assertClose(v.norm(3), 1.8405)
-    assertClose(v.norm(4), 1.7541)
-    assertClose(v.norm(5), 1.7146)
-    assertClose(v.norm(6), 1.6940)
-    assertClose(v.norm(Double.PositiveInfinity), 1.6656)
+    assertClose(norm(v, 1), 3.6577)
+    assertClose(norm(v, 2), 2.0915)
+    assertClose(norm(v, 3), 1.8405)
+    assertClose(norm(v, 4), 1.7541)
+    assertClose(norm(v, 5), 1.7146)
+    assertClose(norm(v, 6), 1.6940)
+    assertClose(norm(v.t, 6), 1.6940)
+    assertClose(norm(v, Double.PositiveInfinity), 1.6656)
   }
 
   test("MulInner") {
@@ -168,6 +190,21 @@ class DenseVectorTest extends FunSuite with Checkers {
     val emptySlice2 = x.slice(2,2)
     assert(emptySlice === DenseVector[Double]())
     assert(emptySlice2 === DenseVector[Double]())
+  }
+
+  test("DenseVector * DenseMatrix Lifted OpMulMatrix") {
+    val x = DenseVector[Int](1, 2, 3)
+    val m = DenseMatrix((1,2,3),
+                        (2,4,6),
+                        (3,6,9))
+    val mr = DenseMatrix((1,2,3))
+
+    val xxt = x * x.t
+    assert(xxt === m)
+
+    val xm = x * mr
+    assert(xm === m)
+
   }
 
   test("Slice and Transpose Int") {
@@ -322,6 +359,12 @@ class DenseVectorTest extends FunSuite with Checkers {
 
   }
 
+  test("Negation Tranpose") {
+    val a1 = DenseVector(1.0, 2.0, 3.0)
+    assert(-a1.t == DenseVector(-1.0, -2.0, -3.0).t)
+
+  }
+
   test("DV ops work as Vector") {
     val a = DenseVector(1.0, 2.0, 3.0)
     val b = DenseVector(3.0, 4.0, 5.0)
@@ -400,6 +443,13 @@ class DenseVectorTest extends FunSuite with Checkers {
     assert(dv === DenseVector(1,1,2,3,4,5,6,7,8,8))
   }
 
+  test("clip tranpose") {
+    val dv = DenseVector.range(0, 10)
+    assert(clip(dv.t, 1, 8) === DenseVector(1,1,2,3,4,5,6,7,8,8).t)
+    clip.inPlace(dv.t, 1, 8)
+    assert(dv.t === DenseVector(1,1,2,3,4,5,6,7,8,8).t)
+  }
+
   test("any and all") {
     val a = DenseVector(1, 2, 3)
     val b = DenseVector(1, 4, 1)
@@ -420,6 +470,36 @@ class DenseVectorTest extends FunSuite with Checkers {
     assert(!a === DenseVector(false, true, true))
   }
 
+  // blas causes me so many headaches
+  test("negative step sizes and dot -- Double") {
+    val foo = DenseVector(1.0, 2.0, 3.0, 4.0)
+    val fneg = foo(3 to 0 by -1)
+    println(fneg, fneg.offset, fneg.data, fneg.length, fneg.stride)
+    assert((foo dot foo(3 to 0 by -1)) === 20.0)
+  }
+
+  test("negative step sizes and + -- Double") {
+    val foo = DenseVector(1.0, 2.0, 3.0, 4.0)
+    val fneg = foo(3 to 0 by -1)
+    assert(foo + fneg === DenseVector(5.0, 5.0, 5.0, 5.0))
+  }
+
+
+  test("negative step sizes and scale -- Double") {
+    val foo = DenseVector(1.0, 2.0, 3.0, 4.0)
+    val fneg = foo(3 to 0 by -1)
+    fneg *= 1.0
+    assert(fneg * 3.0 === DenseVector(12.0, 9.0, 6.0, 3.0))
+  }
+
+  test("negative step sizes and assignment -- Double") {
+    val foo = DenseVector(1.0, 2.0, 3.0, 4.0)
+    val fneg = foo(3 to 0 by -1)
+    fneg.copy
+    val fy = DenseVector.zeros[Double](fneg.length)
+    fy := fneg
+    assert(fy === DenseVector(4.0, 3.0, 2.0, 1.0))
+  }
 }
 
 /**
@@ -428,7 +508,7 @@ class DenseVectorTest extends FunSuite with Checkers {
  */
 @RunWith(classOf[JUnitRunner])
 class DenseVectorOps_DoubleTest extends DoubleValuedTensorSpaceTestBase[DenseVector[Double], Int] {
- val space: TensorSpace[DenseVector[Double], Int, Double] = implicitly
+ val space = DenseVector.space[Double]
 
   val N = 30
   implicit def genTriple: Arbitrary[(DenseVector[Double], DenseVector[Double], DenseVector[Double])] = {
@@ -449,7 +529,7 @@ class DenseVectorOps_DoubleTest extends DoubleValuedTensorSpaceTestBase[DenseVec
 
 @RunWith(classOf[JUnitRunner])
 class DenseVectorOps_IntTest extends TensorSpaceTestBase[DenseVector[Int], Int, Int] {
- val space: TensorSpace[DenseVector[Int], Int, Int] = implicitly
+ val space = DenseVector.space[Int]
 
   val N = 30
   implicit def genTriple: Arbitrary[(DenseVector[Int], DenseVector[Int], DenseVector[Int])] = {
@@ -470,7 +550,7 @@ class DenseVectorOps_IntTest extends TensorSpaceTestBase[DenseVector[Int], Int, 
 
 @RunWith(classOf[JUnitRunner])
 class DenseVectorOps_ComplexTest extends TensorSpaceTestBase[DenseVector[Complex], Int, Complex] {
-  val space: TensorSpace[DenseVector[Complex], Int, Complex] = implicitly
+  val space = DenseVector.space[Complex]
 
   val N = 30
   implicit def genTriple: Arbitrary[(DenseVector[Complex], DenseVector[Complex], DenseVector[Complex])] = {
@@ -491,7 +571,7 @@ class DenseVectorOps_ComplexTest extends TensorSpaceTestBase[DenseVector[Complex
 
 @RunWith(classOf[JUnitRunner])
 class DenseVectorOps_FloatTest extends TensorSpaceTestBase[DenseVector[Float], Int, Float] {
- val space: TensorSpace[DenseVector[Float], Int, Float] = implicitly
+ val space = DenseVector.space[Float]
 
   val N = 30
   implicit def genTriple: Arbitrary[(DenseVector[Float], DenseVector[Float], DenseVector[Float])] = {

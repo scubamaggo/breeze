@@ -14,22 +14,23 @@ package breeze.linalg
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+
+import Axis._1
 import operators._
-import com.github.fommil.netlib.BLAS.{getInstance => blas}
-import com.github.fommil.netlib.LAPACK.{getInstance => lapack}
-import breeze.util.ArrayUtil
 import support._
+import support.CanTraverseValues.ValuesVisitor
 import breeze.generic._
-import breeze.math.{Complex, Ring, Semiring}
+import breeze.math._
 import breeze.storage.Zero
 import breeze.storage.Zero._
+import breeze.util.ArrayUtil
+
+import com.github.fommil.netlib.BLAS.{getInstance => blas}
+import com.github.fommil.netlib.LAPACK.{getInstance => lapack}
+
+import scala.{specialized=>spec}
 import scala.reflect.ClassTag
-import org.netlib.util.intW
-import breeze.macros.expand
-import scala.math.BigInt
 import scala.collection.mutable.ArrayBuffer
-import CanTraverseValues.ValuesVisitor
-import breeze.linalg.Axis._1
 
 /**
  * A DenseMatrix is a matrix with all elements found in an array. It is column major unless isTranspose is true,
@@ -49,13 +50,14 @@ import breeze.linalg.Axis._1
  * @param isTranspose if true, then the matrix is considered to be "transposed" (that is, row major)
  */
 @SerialVersionUID(1L)
-final class DenseMatrix[@specialized(Int, Float, Double) V](val rows: Int,
+final class DenseMatrix[@spec(Double, Int, Float, Long) V](val rows: Int,
                                                             val cols: Int,
                                                             val data: Array[V],
                                                             val offset: Int,
                                                             val majorStride: Int,
                                                             val isTranspose: Boolean = false)
   extends Matrix[V] with MatrixLike[V, DenseMatrix[V]] with Serializable {
+
   /** Creates a matrix with the specified data array, rows, and columns. */
   def this(rows: Int, cols: Int)(implicit man: ClassTag[V]) = this(rows, cols, new Array[V](rows * cols), 0, rows)
   /** Creates a matrix with the specified data array, rows, and columns. Data must be column major */
@@ -116,6 +118,8 @@ final class DenseMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   def unsafeUpdate(row: Int, col: Int, v: V): Unit = { data(linearIndex(row, col)) = v }
 
+  // <editor-fold defaultstate="collapsed" desc=" conversions (toArray, toDenseVector) ">
+
   /** Converts this matrix to a flat Array (column-major) */
   def toArray: Array[V] = {
     implicit val man = ClassTag[V](data.getClass.getComponentType.asInstanceOf[Class[V]])
@@ -134,6 +138,8 @@ final class DenseMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   /** Converts this matrix to a DenseVector (column-major) */
   def toDenseVector: DenseVector[V] = DenseVector( toArray )
+
+  // </editor-fold>
 
   /** Converts this matrix to a DenseVector (column-major)
     * If view = true (or View.Require), throws an exception if we cannot return a view. otherwise returns a view.
@@ -321,6 +327,7 @@ final class DenseMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
 object DenseMatrix extends LowPriorityDenseMatrix
 with DenseMatrixOps
+with DenseMatrix_OrderingOps
 with DenseMatrixMultOps
 with DenseMatrixMultiplyStuff
 with DenseMatrixFloatMultiplyStuff
@@ -329,21 +336,21 @@ with MatrixConstructors[DenseMatrix] {
   /**
    * The standard way to create an empty matrix, size is rows * cols
    */
-  def zeros[@specialized(Int, Float, Double) V:ClassTag:Zero](rows: Int, cols: Int): DenseMatrix[V] = {
+  def zeros[@spec(Double, Int, Float, Long) V:ClassTag:Zero](rows: Int, cols: Int): DenseMatrix[V] = {
     val data = new Array[V](rows * cols)
     if(implicitly[Zero[V]] != null && rows * cols != 0 && data(0) != implicitly[Zero[V]].zero)
       ArrayUtil.fill(data, 0, data.length, implicitly[Zero[V]].zero)
     new DenseMatrix(rows, cols, data)
   }
 
-  def create[@specialized(Int, Float, Double) V:Zero](rows: Int, cols: Int, data: Array[V]): DenseMatrix[V] = {
+  def create[@spec(Double, Int, Float, Long) V:Zero](rows: Int, cols: Int, data: Array[V]): DenseMatrix[V] = {
     new DenseMatrix(rows, cols, data)
   }
 
   /**
    * Creates a square diagonal array of size dim x dim, with 1's along the diagonal.
    */
-  def eye[@specialized(Int, Float, Double) V: ClassTag:Zero:Semiring](dim: Int): DenseMatrix[V] = {
+  def eye[@spec(Double, Int, Float, Long) V: ClassTag:Zero:Semiring](dim: Int): DenseMatrix[V] = {
     val r = zeros[V](dim, dim)
     breeze.linalg.diag.diagDMDVImpl.apply(r) := implicitly[Semiring[V]].one
     r
@@ -535,13 +542,13 @@ with MatrixConstructors[DenseMatrix] {
     new CanMapValues[DenseMatrix[V],V,R,DenseMatrix[R]] {
       private def simpleMap(from : DenseMatrix[V], fn : (V=>R), isTranspose: Boolean): DenseMatrix[R] = {
         val data = new Array[R](from.size)
-        var i=from.offset
-        val iMax = data.size + from.offset
+        var i= 0
+        val iMax = data.size
         while (i < iMax) {
-          data(i) = fn(from.data(i))
+          data(i) = fn(from.data(i + from.offset))
           i += 1
         }
-        return new DenseMatrix[R](from.rows, from.cols, data, 0, if (isTranspose) { from.cols } else { from.rows }, isTranspose)
+        new DenseMatrix[R](from.rows, from.cols, data, 0, if (isTranspose) { from.cols } else { from.rows }, isTranspose)
       }
 
       private def generalMap(from : DenseMatrix[V], fn : (V=>R)): DenseMatrix[R] = {
@@ -738,19 +745,19 @@ with MatrixConstructors[DenseMatrix] {
    * @tparam R
    * @return
    */
-  implicit def canMapRows[V:ClassTag:Zero]: CanCollapseAxis[DenseMatrix[V], Axis._0.type, DenseVector[V], DenseVector[V], DenseMatrix[V]]  = new CanCollapseAxis[DenseMatrix[V], Axis._0.type, DenseVector[V], DenseVector[V], DenseMatrix[V]] {
-    def apply(from: DenseMatrix[V], axis: Axis._0.type)(f: (DenseVector[V]) => DenseVector[V]): DenseMatrix[V] = {
-      var result:DenseMatrix[V] = null
+  implicit def canMapRows[V, R:ClassTag:Zero]: CanCollapseAxis[DenseMatrix[V], Axis._0.type, DenseVector[V], DenseVector[R], DenseMatrix[R]]  = new CanCollapseAxis[DenseMatrix[V], Axis._0.type, DenseVector[V], DenseVector[R], DenseMatrix[R]] {
+    def apply(from: DenseMatrix[V], axis: Axis._0.type)(f: (DenseVector[V]) => DenseVector[R]): DenseMatrix[R] = {
+      var result:DenseMatrix[R] = null
       for(c <- 0 until from.cols) {
         val col = f(from(::, c))
         if(result eq null) {
-          result = DenseMatrix.zeros[V](col.length, from.cols)
+          result = DenseMatrix.zeros[R](col.length, from.cols)
         }
         result(::, c) := col
       }
 
       if(result eq null){
-        DenseMatrix.zeros[V](0, from.cols)
+        DenseMatrix.zeros[R](0, from.cols)
       } else {
         result
       }
@@ -784,32 +791,35 @@ with MatrixConstructors[DenseMatrix] {
    * @tparam V value type
    * @return
    */
-  implicit def canMapCols[V:ClassTag:Zero]: CanCollapseAxis[DenseMatrix[V], _1.type, DenseVector[V], DenseVector[V], DenseMatrix[V]]  = new CanCollapseAxis[DenseMatrix[V], Axis._1.type, DenseVector[V], DenseVector[V], DenseMatrix[V]] {
-    def apply(from: DenseMatrix[V], axis: Axis._1.type)(f: (DenseVector[V]) => DenseVector[V]): DenseMatrix[V] = {
-      var result:DenseMatrix[V] = null
-      import from.{rows, cols}
-      val t = from.t
-      for(r <- 0 until from.rows) {
-        val row = f(t(::, r))
-        if(result eq null) {
-          // scala has decided this method is overloaded, and needs a result type.
-          // It has a result type, and is not overloaded.
-//          result = DenseMatrix.zeros[V](from.rows, row.length)
-          val data = new Array[V](rows * row.length)
-          result = new DenseMatrix(rows, row.length, data)
+  implicit def canMapCols[V, Res:ClassTag:Zero]: CanCollapseAxis[DenseMatrix[V], _1.type, DenseVector[V], DenseVector[Res], DenseMatrix[Res]] = {
+    new CanCollapseAxis[DenseMatrix[V], Axis._1.type, DenseVector[V], DenseVector[Res], DenseMatrix[Res]] {
+      def apply (from: DenseMatrix[V], axis: Axis._1.type) (f: (DenseVector[V] ) => DenseVector[Res] ): DenseMatrix[Res] = {
+        var result: DenseMatrix[Res] = null
+        import from. {rows, cols}
+        val t = from.t
+        for (r <- 0 until from.rows) {
+          val row = f (t (::, r) )
+          if (result eq null) {
+            // scala has decided this method is overloaded, and needs a result type.
+            // It has a result type, and is not overloaded.
+            //          result = DenseMatrix.zeros[V](from.rows, row.length)
+            val data = new Array[Res] (rows * row.length)
+            result = new DenseMatrix (rows, row.length, data)
+          }
+          result.t apply (::, r) := row
         }
-        result.t apply (::, r) := row
-      }
 
-      if(result ne null) {
-        result
-      } else {
-        val data = new Array[V](0)
-        result = new DenseMatrix(rows, 0, data)
-        result
+        if (result ne null) {
+          result
+        } else {
+          val data = new Array[Res] (0)
+          result = new DenseMatrix (rows, 0, data)
+          result
+        }
       }
     }
   }
+
   implicit def handholdCanMapCols[V]: CanCollapseAxis.HandHold[DenseMatrix[V], Axis._1.type, DenseVector[V]] = new CanCollapseAxis.HandHold[DenseMatrix[V], Axis._1.type, DenseVector[V]]()
 
   implicit def canMapColsBitVector[V:ClassTag:Zero] = new CanCollapseAxis[DenseMatrix[V], Axis._1.type, DenseVector[V], BitVector, DenseMatrix[Boolean]] {
@@ -855,7 +865,6 @@ with MatrixConstructors[DenseMatrix] {
   /**
    * iterates over each column
    * @tparam V
-   * @tparam R
    * @return
    */
   implicit def canIterateRows[V:ClassTag:Zero] = new CanIterateAxis[DenseMatrix[V], Axis._1.type, DenseVector[V]] {
@@ -877,7 +886,9 @@ with MatrixConstructors[DenseMatrix] {
   implicit val setMV_I: OpSet.InPlaceImpl2[DenseMatrix[Int], DenseVector[Int]] = new SetDMDVOp[Int]();
 
   // There's a bizarre error specializing float's here.
-  class CanZipMapValuesDenseMatrix[@specialized(Int, Double, Float) V, @specialized(Int, Double) RV: ClassTag] extends CanZipMapValues[DenseMatrix[V], V, RV, DenseMatrix[RV]] {
+  class CanZipMapValuesDenseMatrix[@spec(Double, Int, Float, Long) V, @specialized(Int, Double) RV: ClassTag]
+    extends CanZipMapValues[DenseMatrix[V], V, RV, DenseMatrix[RV]] {
+
     def create(rows: Int, cols: Int) = new DenseMatrix(rows, cols, new Array[RV](rows * cols))
 
     /**Maps all corresponding values from the two collection. */
@@ -903,6 +914,36 @@ with MatrixConstructors[DenseMatrix] {
   implicit val zipMap_f: CanZipMapValuesDenseMatrix[Float, Float] = new CanZipMapValuesDenseMatrix[Float, Float]
   implicit val zipMap_i: CanZipMapValuesDenseMatrix[Int, Int] = new CanZipMapValuesDenseMatrix[Int, Int]
 
+  class CanZipMapKeyValuesDenseMatrix[@spec(Double, Int, Float, Long) V, @specialized(Int, Double) RV: ClassTag]
+    extends CanZipMapKeyValues[DenseMatrix[V], (Int, Int), V, RV, DenseMatrix[RV]] {
+
+    def create(rows: Int, cols: Int) = new DenseMatrix(rows, cols, new Array[RV](rows * cols))
+
+
+    override def mapActive(from: DenseMatrix[V], from2: DenseMatrix[V], fn: ((Int, Int), V, V) => RV): DenseMatrix[RV] = {
+      map(from, from2, fn)
+    }
+
+    /**Maps all corresponding values from the two collection. */
+    def map(from: DenseMatrix[V], from2: DenseMatrix[V], fn: ((Int, Int), V, V) => RV) = {
+      require(from.rows == from2.rows, "Vector row dimensions must match!")
+      require(from.cols == from2.cols, "Vector col dimensions must match!")
+      val result = create(from.rows, from.cols)
+      var i = 0
+      while (i < from.rows) {
+        var j = 0
+        while (j < from.cols) {
+          result(i, j) = fn((i, j), from(i, j), from2(i, j))
+          j += 1
+        }
+        i += 1
+      }
+      result
+    }
+  }
+
+  implicit def zipMapKV[V, R: ClassTag]: CanZipMapKeyValuesDenseMatrix[V, R] = new CanZipMapKeyValuesDenseMatrix[V, R]
+
   implicit def canGaxpy[V: Semiring]: scaleAdd.InPlaceImpl3[DenseMatrix[V], V, DenseMatrix[V]] = {
     new scaleAdd.InPlaceImpl3[DenseMatrix[V], V, DenseMatrix[V]] {
       val ring = implicitly[Semiring[V]]
@@ -923,7 +964,21 @@ with MatrixConstructors[DenseMatrix] {
     }
   }
 
+  implicit def canDim[E] = new dim.Impl[DenseMatrix[E],(Int,Int)] {
+    def apply(v: DenseMatrix[E]): (Int, Int) = (v.rows,v.cols)
+  }
+
+  object FrobeniusInnerProductDenseMatrixSpace {
+
+    implicit def space[S:Field:Zero:ClassTag] = {
+      val norms = EntrywiseMatrixNorms.make[DenseMatrix[S],S]
+      import norms._
+      MutableFiniteCoordinateField.make[DenseMatrix[S],(Int,Int),S]
+    }
+  }
+
   @noinline
   private def init() = {}
+
 
 }

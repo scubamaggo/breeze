@@ -14,7 +14,6 @@ import scala.reflect.ClassTag
 
 trait DenseVectorOps extends DenseVector_GenericOps { this: DenseVector.type =>
 
-
   @expand
   @expand.valify
   implicit def dv_v_Op[@expand.args(Int, Double, Float, Long) T,
@@ -78,9 +77,6 @@ trait DenseVectorOps extends DenseVector_GenericOps { this: DenseVector.type =>
     implicitly[BinaryUpdateRegistry[Vector[T], Vector[T], Op.type]].register(this)
   }
 
-
-
-
   @expand
   @expand.valify
   implicit def dv_s_Op[@expand.args(Int, Double, Float, Long) T,
@@ -99,12 +95,33 @@ trait DenseVectorOps extends DenseVector_GenericOps { this: DenseVector.type =>
         aoff += a.stride
         i += 1
       }
-      result
+     result
     }
     implicitly[BinaryRegistry[Vector[T], T, Op.type, Vector[T]]].register(this)
   }
 
+  @expand
+  @expand.valify
+  implicit def s_dv_Op[@expand.args(Int, Double, Float, Long) T,
+  @expand.args(OpAdd, OpSub, OpMulScalar, OpMulMatrix, OpDiv, OpSet, OpMod, OpPow) Op <: OpType]
+  (implicit @expand.sequence[Op]({_ + _},  {_ - _}, {_ * _}, {_ * _}, {_ / _}, {(a,b) => b}, {_ % _}, {_ pow _})
+  op: Op.Impl2[T, T, T]):Op.Impl2[T, DenseVector[T], DenseVector[T]] = new Op.Impl2[T, DenseVector[T], DenseVector[T]] {
+    def apply(a: T, b: DenseVector[T]): DenseVector[T] = {
+      val bd = b.data
+      var boff = b.offset
+      val result = DenseVector.zeros[T](b.length)
+      val rd = result.data
 
+      var i = 0
+      while(i < b.length) {
+        rd(i) = op(a, bd(boff))
+        boff += b.stride
+        i += 1
+      }
+      result
+    }
+    implicitly[BinaryRegistry[T, Vector[T], Op.type, Vector[T]]].register(this)
+  }
 
   @expand
   @expand.valify
@@ -180,8 +197,6 @@ trait DenseVectorOps extends DenseVector_GenericOps { this: DenseVector.type =>
       implicitly[BinaryUpdateRegistry[Vector[T], T, Op.type]].register(this)
     }
   }
-
-
 
   @expand
   @expand.valify
@@ -266,6 +281,28 @@ trait DenseVectorOps extends DenseVector_GenericOps { this: DenseVector.type =>
     implicitly[BinaryRegistry[Vector[T], Vector[T], zipValues.type, ZippedValues[T, T]]]
 
     res
+  }
+
+  implicit def axpy[V:Semiring:ClassTag]: scaleAdd.InPlaceImpl3[DenseVector[V],V,DenseVector[V]] = {
+    new scaleAdd.InPlaceImpl3[DenseVector[V], V, DenseVector[V]] {
+      val sr = implicitly[Semiring[V]]
+      def apply(a: DenseVector[V], s: V, b: DenseVector[V]) {
+        require(b.length == a.length, "Vectors must be the same length!")
+        val ad = a.data
+        val bd = b.data
+        var aoff = a.offset
+        var boff = b.offset
+
+        var i = 0
+        while(i < a.length) {
+          ad(aoff) = sr.+(ad(aoff),sr.*(s,bd(boff)))
+          aoff += a.stride
+          boff += b.stride
+          i += 1
+        }
+      }
+      implicitly[TernaryUpdateRegistry[Vector[V], V, Vector[V], scaleAdd.type]].register(this)
+    }
   }
 
   @expand
@@ -421,8 +458,10 @@ trait DenseVector_SpecialOps extends DenseVectorOps { this: DenseVector.type =>
     new breeze.linalg.operators.OpMulInner.Impl2[DenseVector[Float], DenseVector[Float], Float] {
       def apply(a: DenseVector[Float], b: DenseVector[Float]) = {
         require(b.length == a.length, "Vectors must be the same length!")
+        val boff = if (b.stride >= 0) b.offset else (b.offset + b.stride * (b.length - 1))
+        val aoff = if (a.stride >= 0) a.offset else (a.offset + a.stride * (a.length - 1))
         blas.sdot(
-          a.length, b.data, b.offset, b.stride, a.data, a.offset, a.stride)
+          a.length, b.data, boff, b.stride, a.data, aoff, a.stride)
       }
       implicitly[BinaryRegistry[Vector[Float], Vector[Float], OpMulInner.type, Float]].register(this)
     }
@@ -660,6 +699,42 @@ trait DenseVector_GenericOps { this: DenseVector.type =>
       }
     }
 
+  implicit def canNormField[T:Field]: norm.Impl2[DenseVector[T],Double,Double] = {
+    val f = implicitly[Field[T]]
+    new norm.Impl2[DenseVector[T],Double,Double] {
+      def apply(v: DenseVector[T],n: Double) = {
+        import v._
+        if (n == 1) {
+          var sum = 0.0
+          foreach (v => sum += f.sNorm(v) )
+          sum
+        } else if (n == 2) {
+          var sum = 0.0
+          foreach (v => { val nn = f.sNorm(v); sum += nn * nn })
+          math.sqrt(sum)
+        } else if (n == Double.PositiveInfinity) {
+          var max = 0.0
+          foreach (v => { val nn = f.sNorm(v); if (nn > max) max = nn })
+          max
+        } else {
+          var sum = 0.0
+          foreach (v => { val nn = f.sNorm(v); sum += math.pow(nn,n) })
+          math.pow(sum, 1.0 / n)
+        }
+      }
+    }
+  }
 
+  implicit def canNorm[T:Field]: norm.Impl[DenseVector[T],Double] = {
+    val f = implicitly[Field[T]]
+    new norm.Impl[DenseVector[T],Double] {
+      override def apply(v: DenseVector[T]): Double = {
+        import v._
+        var sum = 0.0
+        foreach (v => { val nn = f.sNorm(v); sum += nn * nn })
+        math.sqrt(sum)
+      }
+    }
+  }
 
 }
